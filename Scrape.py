@@ -9,6 +9,11 @@ import os
 import time
 import datetime
 import BinaryOptionTrade
+import tkinter as tk
+from tkinter import messagebox
+
+root = tk.Tk()
+root.withdraw()
 
 selected_menu = ""
 selected_term = ""
@@ -115,14 +120,18 @@ def send_order():
 
     amount_input.clear()
     amount_input.send_keys(order_info['amount'])
-    trade_panel = driver.find_element_by_id(trade_data['id'])
-
-    if order_info['sign'].strip() == "HIGH":
-        high_button = driver.find_element_by_id("up_button")
-        high_button.click()
-    elif order_info['sign'].strip() == "LOW":
-        low_button = driver.find_element_by_id("down_button")
-        low_button.click()
+    soup = BeautifulSoup(driver.page_source, "lxml")
+    is_read_only = soup.find('input', id='amount', readonly='readonly')
+    if is_read_only is None:
+        trade_panel = driver.find_element_by_id(trade_data['id'])
+        if order_info['sign'].strip() == "HIGH":
+            high_button = driver.find_element_by_id("up_button")
+            high_button.click()
+        elif order_info['sign'].strip() == "LOW":
+            low_button = driver.find_element_by_id("down_button")
+            low_button.click()
+    else:
+        messagebox.showerror('発注', "発注締め切り時間後のため、発注出来ません。")
 
 
 def select_symbol(order):
