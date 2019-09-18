@@ -1,4 +1,3 @@
-from typing import Dict, Any, Union
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver import ChromeOptions
@@ -8,6 +7,7 @@ import Parameter
 import re
 import os
 import time
+import datetime
 import BinaryOptionTrade
 
 selected_menu = ""
@@ -94,11 +94,12 @@ def detect_signal():
         if "/" not in order_info['symbol']:
             symbol = order_info['symbol'][0:3] + "/" + order_info['symbol'][3:6]
             order_info['symbol'] = symbol
-        order_info['sigh'] = reader.readline()
+        order_info['sign'] = reader.readline()
         order_info['term'] = reader.readline()
+        order_info['amount'] = reader.readline()
         reader.close()
         print("symbol=" + order_info['symbol'] + "sign=" +
-              order_info['sigh'] + "term=" + order_info['term'])
+              order_info['sign'] + "term=" + order_info['term'], " Amount=" + order_info['amount'])
         while os.path.exists(Parameter.Sign_file_path):
             os.remove(Parameter.Sign_file_path)
             order_flag = True
@@ -107,9 +108,21 @@ def detect_signal():
 
 
 def send_order():
-    global order_info
+    global driver, order_info
     select_symbol(order_info)
-    select_indicated_term()
+    trade_data = select_indicated_term()
+    amount_input = driver.find_element_by_id("amount")
+
+    amount_input.clear()
+    amount_input.send_keys(order_info['amount'])
+    trade_panel = driver.find_element_by_id(trade_data['id'])
+
+    if order_info['sign'].strip() == "HIGH":
+        high_button = driver.find_element_by_id("up_button")
+        high_button.click()
+    elif order_info['sign'].strip() == "LOW":
+        low_button = driver.find_element_by_id("down_button")
+        low_button.click()
 
 
 def select_symbol(order):
@@ -122,7 +135,7 @@ def select_symbol(order):
     time.sleep(5)
     select = driver.find_element_by_css_selector("#assetsFilteredList > div")
     select.click()
-    time.sleep(5)
+    time.sleep(1)
 
 
 def select_indicated_term():
@@ -133,63 +146,92 @@ def select_indicated_term():
     order_info変数のtermの項目がShortであれば終了時刻が現在に最も近いものを選択し、
     Middleであれば、真ん中のもの、Longであれば終了時刻が最も遅いものを選択する。
     
+    Returns:
+        辞書型オブジェクト:
+            {"id": "4桁の注文ID", "order_id": "39桁の注文ID"}
     """
     trade_box = []
     trade_info = {}
+    trade_data = {}
+    long_term_trade_data = {}
+    middle_term_trade_data = {}
+    short_term_trade_data = {}
     if selected_menu == "ChangingStrike" or selected_menu == "FixedPayoutHL":
         if selected_term == "15分":
-            # ChangingStrike(High・Low）かFixedPayoutHL（High・Lowスプレッド）の場合で、選択された期間が１５分だった場合、
-            # 締め切り時刻別に３つのパネルがあるので、予め指定された期間（短期・中期・長期）に対応して注文を選択する。
-            if order_info['term'].strip() == "Short":
-                soup = BeautifulSoup(driver.page_source, 'lxml')
-                selected_menu_expression = selected_menu + "|" + selected_menu + " selected"
-                carousel_items = soup.find_all('div', class_=re.compile(selected_menu_expression))
-                for item in carousel_items:
-                    trade_info['id'] = item.attrs['id']
-                    trade_info['expire_time'] = item.find('span', class_='time-digits').string
-                    trade_info['duration'] = item.find('span', class_="duration").string
-                    trade_info['order_no'] = item.attrs['order']
-                    trade_box.append(trade_info)
-            elif order_info['term'].strip() == 'Middle':
-                soup = BeautifulSoup(driver.page_source, 'lxml')
-                selected_menu_expression = selected_menu + "|" + selected_menu + " selected"
-                carousel_items = soup.find_all('div', class_=re.compile(selected_menu_expression), id=re.compile("\\d{4}"))
-                for item in carousel_items:
-                    trade_info['id'] = item.attrs['id']
-                    trade_info['expire_time'] = item.find('span', class_='time-digits').string
-                    trade_info['duration'] = item.find('span', class_="duration").string
-                    trade_info['order_no'] = item.attrs['order']
-                    trade_box.append(trade_info)
-            elif order_info['term'].strip() == 'Long':
-                soup = BeautifulSoup(driver.page_source, 'lxml')
-                selected_menu_expression = selected_menu + "|" + selected_menu + " selected"
-                carousel_items = soup.find_all('div', class_=re.compile(selected_menu_expression))
-                for item in carousel_items:
-                    trade_info['id'] = item.attrs['id']
-                    trade_info['expire_time'] = item.find('span', class_='time-digits').string
-                    trade_info['duration'] = item.find('span', class_="duration").string
-                    trade_info['order_no'] = item.attrs['order']
-                    trade_box.append(trade_info)
-        else:
             soup = BeautifulSoup(driver.page_source, 'lxml')
+            # メインメニューでChangingStrike(High・Low）かFixedPayoutHL（High・Lowスプレッド）が選択されていて、
+            # かつ２番目のメニューで選択された期間が１５分だった場合、
+            # 締め切り時刻別に３つのパネルがあるので、予め指定された期間（短期・中期・長期）に対応して注文を選択する。
             selected_menu_expression = selected_menu + "|" + selected_menu + " selected"
-            carousel_items = soup.find_all('div', class_=re.compile(selected_menu_expression))
+            carousel_items = soup.find_all('div', class_=re.compile(selected_menu_expression), id=re.compile("\d{4}"))
+            now = datetime.datetime.now()
+            today = datetime.date(now.year, now.month, now.day)
             for item in carousel_items:
-                trade_info['id'] = item.attrs['id']
-                trade_info['expire_time'] = item.find('span', class_='time-digits').string
-                trade_info['duration'] = item.find('span', class_="duration").string
-                trade_info['order_no'] = item.attrs['order']
-                trade_box.append(trade_info)
+                id_ = item.attrs['id']
+                expire_time = item.find('span', class_='time-digits').string
+                # duration = item.find('span', class_="duration").string
+                order_no = item.attrs['order']
+                trade_box.append({"id": id_, "expire_time": expire_time, "order_no": order_no})
+            time_0 = datetime.datetime.strptime(trade_box[0]['expire_time'].encode('utf-8').decode(), '%H:%M')
+            time_1 = datetime.datetime.strptime(trade_box[1]['expire_time'].encode('utf-8').decode(), '%H:%M')
+            time_2 = datetime.datetime.strptime(trade_box[2]['expire_time'].encode('utf-8').decode(), '%H:%M')
+            datetime_0 = datetime.datetime(year=today.year, month=today.month, day=today.day, hour=time_0.hour,
+                                           minute=time_0.minute, second=0)
+            datetime_1 = datetime.datetime(year=today.year, month=today.month, day=today.day, hour=time_1.hour,
+                                           minute=time_1.minute, second=0)
+            datetime_2 = datetime.datetime(year=today.year, month=today.month, day=today.day, hour=time_2.hour,
+                                           minute=time_2.minute, second=0)
+            if datetime_0 < datetime_1:
+                if datetime_2 < datetime_0:
+                    short_term_trade_data = trade_box[2]
+                    middle_term_trade_data = trade_box[0]
+                    long_term_trade_data = trade_box[1]
+                elif datetime_1 < datetime_2:
+                    short_term_trade_data = trade_box[0]
+                    middle_term_trade_data = trade_box[1]
+                    long_term_trade_data = trade_box[2]
+            else:
+                if datetime_2 > datetime_0:
+                    short_term_trade_data = trade_box[1]
+                    middle_term_trade_data = trade_box[0]
+                    long_term_trade_data = trade_box[2]
+                elif datetime_1 < datetime_2:
+                    short_term_trade_data = trade_box[1]
+                    middle_term_trade_data = trade_box[2]
+                    long_term_trade_data = trade_box[0]
+            if order_info['term'].strip() == "Short":
+                trade_data = {"id": short_term_trade_data['id'], "order_no": short_term_trade_data['order_no']}
+            elif order_info['term'].strip() == "Middle":
+                trade_data = {"id": middle_term_trade_data['id'], "order_no": middle_term_trade_data['order_no']}
+            elif order_info['term'].strip() == "Long":
+                trade_data = {"id": long_term_trade_data['id'], "order_no": long_term_trade_data['order']}
+            return trade_data
+        else:
+            # HighLowまたは、HighLowスプレッドで、１５分以外が選択されていた場合
+            soup = BeautifulSoup(driver.page_source, 'lxml')
+            selected_menu_expression = "carousel_item " + selected_menu + " selected"
+            carousel_items = soup.find_all('div', class_=re.compile(selected_menu_expression), id=re.compile("\d{4}"))
+            trade_info['id'] = carousel_items[0].attrs['id']
+            trade_info['order_no'] = carousel_items[0].attrs['order']
+            trade_data = {"id": trade_info['id'], 'order_no': trade_info['order_no']}
+            return trade_data
     else:
+        # メインメニューでTurboまたはTurboスプレッドが選択されていた場合
         soup = BeautifulSoup(driver.page_source, 'lxml')
-        selected_menu_expression = selected_menu + "|" + selected_menu + " selected"
-        carousel_items = soup.find_all('div', class_=re.compile(selected_menu_expression))
-        for item in carousel_items:
-            trade_info['id'] = item.attrs['id']
-            trade_info['expire_time'] = item.find('span', class_='time-digits').string
-            trade_info['duration'] = item.find('span', class_="duration").string
-            trade_info['order_no'] = item.attrs['order']
-            trade_box.append(trade_info)
+        selected_menu_expression = "carousel_item " + selected_menu + " selected"
+        carousel_items = soup.find_all('div', class_=selected_menu_expression, id=re.compile("\d{4}"))
+        trade_info['id'] = carousel_items[0].attrs['id']
+        trade_info['order_no'] = carousel_items[0].attrs['order']
+        trade_data = {"id": trade_info['id'], 'order_no': trade_info['order_no']}
+    return trade_data
+
+
+def set_oneclick_trade():
+    global driver
+    oneclick_trade = driver.find_element_by_css_selector(
+        "#strikeAreaRegion > div > div.chartTimeArea.pull-right.last-child > a")
+    oneclick_trade.click()
+    WebDriverWait(driver, 60).until(ec.presence_of_all_elements_located)
 
 
 def terminate_webdriver():
