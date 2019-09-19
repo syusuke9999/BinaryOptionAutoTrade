@@ -17,7 +17,9 @@ root.withdraw()
 
 selected_menu = ""
 selected_duration = ""
-
+Sign_file_path = ""
+username = ""
+password = ""
 
 order_flag = False
 order_info = {}
@@ -46,7 +48,12 @@ def get_selected_menu_and_duration():
 
 
 def transit_to_login_page():
-    global driver
+    global driver, Sign_file_path, username, password
+    reader = open("setting.txt", "r", encoding='utf-8')
+    Sign_file_path = reader.readline()
+    Sign_file_path = Sign_file_path.strip()
+    username = reader.readline()
+    password = reader.readline()
     driver.get(Parameter.top_page_url)
     WebDriverWait(driver, 60).until(expected_conditions.url_contains(Parameter.top_page_url))
     driver.execute_script(Parameter.script_to_transition_login_page)
@@ -58,7 +65,7 @@ def transit_to_login_page():
 
 
 def login_to_member_page():
-    global driver
+    global driver, Sign_file_path, user_name, password
     """
     Returns:
         bool:
@@ -67,9 +74,9 @@ def login_to_member_page():
             False: Log-in procedure is failed because of some reason.
     """
     user_name = driver.find_element_by_id(Parameter.element_id_of_user_name)
-    user_name.send_keys(Parameter.user_name)
+    user_name.send_keys(username.strip())
     pass_word = driver.find_element_by_id(Parameter.element_id_of_password)
-    pass_word.send_keys(Parameter.password)
+    pass_word.send_keys(password.strip())
     login_button = driver.find_element_by_css_selector(Parameter.element_css_selector_of_login_button)
     login_button.click()
     WebDriverWait(driver, 60).until(expected_conditions.element_to_be_clickable((By.CSS_SELECTOR, "#main-menu > div > ul > li:nth-child(1) > span > a")))
@@ -109,11 +116,11 @@ def detect_signal():
         term：メインメニューで選択された取引手法がHighLow・HighLowスプレッドだった場合の、短期・中期・長期の指定
         amount:発注する金額
     """
-    global order_flag
+    global order_flag, Sign_file_path, user_name, password
     order_flag = False
-    if os.path.exists(Parameter.Sign_file_path):
+    if os.path.exists(Sign_file_path):
         time.sleep(1)
-        reader = open(Parameter.Sign_file_path, "r")
+        reader = open(Sign_file_path, "r")
         order_info['symbol'] = reader.readline()
         if "/" not in order_info['symbol']:
             symbol = order_info['symbol'][0:3] + "/" + order_info['symbol'][3:6]
@@ -125,8 +132,8 @@ def detect_signal():
         order_flag = True
         print("symbol=" + order_info['symbol'] + "sign=" +
               order_info['sign'] + "term=" + order_info['term'], " Amount=" + order_info['amount'])
-        while os.path.exists(Parameter.Sign_file_path):
-            os.remove(Parameter.Sign_file_path)
+        while os.path.exists(Sign_file_path):
+            os.remove(Sign_file_path)
         return order_info, order_flag
     return order_info, order_flag
 
@@ -137,21 +144,27 @@ def send_order():
     trade_data = select_indicated_term()
     trade_box = driver.find_element_by_id(trade_data['id'])
     trade_box.click()
-    amount_input = driver.find_element_by_id("amount")
-    amount_input.clear()
-    amount_input.send_keys(order_info['amount'])
     soup = BeautifulSoup(driver.page_source, "lxml")
-    is_read_only = soup.find('input', id='amount', readonly='readonly')
-    if is_read_only is None:
-        trade_panel = driver.find_element_by_id(trade_data['id'])
-        if order_info['sign'].strip() == "HIGH":
-            high_button = driver.find_element_by_id("up_button")
-            high_button.click()
-        elif order_info['sign'].strip() == "LOW":
-            low_button = driver.find_element_by_id("down_button")
-            low_button.click()
-    else:
-        messagebox.showerror('発注', "発注締め切り時間後のため、発注出来ません。")
+    tradebox_soup = soup.find('div', id=trade_data['id'])
+    while 'selected' not in tradebox_soup['class']:
+        trade_box.click()
+        soup = BeautifulSoup(driver.page_source, "lxml")
+        tradebox_soup = soup.find('div', id=trade_data['id'])
+    if 'selected' in tradebox_soup['class']:
+        amount_input = driver.find_element_by_id("amount")
+        amount_input.clear()
+        amount_input.send_keys(order_info['amount'])
+        soup = BeautifulSoup(driver.page_source, "lxml")
+        is_read_only = soup.find('input', id='amount', readonly='readonly')
+        if is_read_only is None:
+            if order_info['sign'].strip() == "HIGH":
+                high_button = driver.find_element_by_id("up_button")
+                high_button.click()
+            elif order_info['sign'].strip() == "LOW":
+                low_button = driver.find_element_by_id("down_button")
+                low_button.click()
+        else:
+            messagebox.showerror('発注', "発注締め切り時間後のため、発注出来ません。")
 
 
 def select_symbol(order):
