@@ -2,9 +2,6 @@
 top_page_url = "https://trade.highlow.com/"
 login_page_url = "https://highlow.com/login"
 script_to_transition_login_page = "goToExternal()"
-user_name = "HN62990"
-password = "fcy67sGYwC"
-Sign_file_path = "D:\\Users\\digni\\Dropbox\\案件\\現在進行中の案件\\ランサーズの案件\\dashslam\\FXDD - MetaTrader\\MQL4\\Files\\order.txt"
 
 
 # DOMパス
