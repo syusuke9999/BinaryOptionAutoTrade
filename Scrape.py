@@ -2,13 +2,13 @@ from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver import ChromeOptions
 from selenium.webdriver.support import expected_conditions as ec, expected_conditions
+from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 import Parameter
 import re
 import os
 import time
 import datetime
-import BinaryOptionTrade
 import tkinter as tk
 from tkinter import messagebox
 
@@ -16,7 +16,7 @@ root = tk.Tk()
 root.withdraw()
 
 selected_menu = ""
-selected_term = ""
+selected_duration = ""
 
 
 order_flag = False
@@ -26,15 +26,23 @@ options = ChromeOptions()
 driver = webdriver.Chrome(executable_path='c:\\chromedriver_win32\\chromedriver.exe', options=options)
 
 
-def get_selected_menu_and_term():
-    global driver, selected_menu, selected_term
+def get_selected_menu_and_duration():
+    """
+    ブラウザー上で選択されているメインの取引方法と、各取引時間を調べる。
+    :return:
+        selected_menu:
+            選択されているメインの取引方法
+        selected_duration:
+            選択されている期間
+    """
+    global driver, selected_menu, selected_duration
     soup = BeautifulSoup(driver.page_source, "lxml")
     game_tab = soup.select_one('#assetsGameTypeZoneRegion')
     selected = game_tab.find_all("li", attrs={"class": "gameTab selected"})
     selected_menu = selected[0].contents[1].attrs['id']
     term = soup.select_one("#assetsCategoryFilterZoneRegion > div > div.tab.selected")
-    selected_term = term.contents[1].text
-    return selected_menu, selected_term
+    selected_duration = term.contents[1].text
+    return selected_menu, selected_duration
 
 
 def transit_to_login_page():
@@ -64,34 +72,45 @@ def login_to_member_page():
     pass_word.send_keys(Parameter.password)
     login_button = driver.find_element_by_css_selector(Parameter.element_css_selector_of_login_button)
     login_button.click()
-    WebDriverWait(driver, 60).until(ec.presence_of_all_elements_located)
-    source_soup = BeautifulSoup(driver.page_source, "lxml")
-    logged_in = source_soup.select("Logout")
-    if logged_in is not None:
-        return True
-    else:
-        print("ログイン出来ませんでした")
-        return False
+    WebDriverWait(driver, 60).until(expected_conditions.element_to_be_clickable((By.CSS_SELECTOR, "#main-menu > div > ul > li:nth-child(1) > span > a")))
+
+    while driver.current_url != "https://trade.highlow.com/":
+        home_button = driver.find_element_by_css_selector("#main-menu > div > ul > li:nth-child(1) > span > a")
+        home_button.click()
+        WebDriverWait(driver, 60).until(ec.presence_of_all_elements_located)
+    if driver.current_url == "https://trade.highlow.com/":
+        source_soup = BeautifulSoup(driver.page_source, "lxml")
+        logged_in = source_soup.select("Logout")
+        if logged_in is not None:
+            return True
+        else:
+            print("ログイン出来ませんでした")
+            return False
 
 
 def wait_signal():
     global driver, order_info, order_flag
     while order_flag is False:
-        order_info = detect_signal()
+        order_info, order_flag = detect_signal()
     if order_flag:
         send_order()
+        order_flag = False
+        wait_signal()
 
 
 def detect_signal():
     """
-    指定されたフォルダ内のorder.txtファイルを監視して、オーダーが出力されたら内容を読み込む
-
+    指定されたフォルダ内のorder.txtファイルを監視して、オーダーが出力されたら内容を読み込み、返り値として返す。
     Returns
-    -------    　辞書型オブジェクト
-    order_info : {symbol:通貨ペア,sign:サインの種類（high・low）,term:注文形態がHighLow・highlowスプレッドの場合かつ、
-                期間が15分の場合、3種類ある締め切り時刻の内どれを購入するか}
+    -------発注情報が格納された辞書型オブジェクト
+    order_info :
+    項目：
+        sign:HighまたはLow
+        term：メインメニューで選択された取引手法がHighLow・HighLowスプレッドだった場合の、短期・中期・長期の指定
+        amount:発注する金額
     """
     global order_flag
+    order_flag = False
     if os.path.exists(Parameter.Sign_file_path):
         time.sleep(1)
         reader = open(Parameter.Sign_file_path, "r")
@@ -103,21 +122,22 @@ def detect_signal():
         order_info['term'] = reader.readline()
         order_info['amount'] = reader.readline()
         reader.close()
+        order_flag = True
         print("symbol=" + order_info['symbol'] + "sign=" +
               order_info['sign'] + "term=" + order_info['term'], " Amount=" + order_info['amount'])
         while os.path.exists(Parameter.Sign_file_path):
             os.remove(Parameter.Sign_file_path)
-            order_flag = True
-        return order_info
-    return order_info
+        return order_info, order_flag
+    return order_info, order_flag
 
 
 def send_order():
     global driver, order_info
     select_symbol(order_info)
     trade_data = select_indicated_term()
+    trade_box = driver.find_element_by_id(trade_data['id'])
+    trade_box.click()
     amount_input = driver.find_element_by_id("amount")
-
     amount_input.clear()
     amount_input.send_keys(order_info['amount'])
     soup = BeautifulSoup(driver.page_source, "lxml")
@@ -135,20 +155,30 @@ def send_order():
 
 
 def select_symbol(order):
+    """
+    受け取った引数の通貨ペアをハイロードットコムの発注画面で選択する
+    :param order:
+    発注情報が格納された辞書型オブジェクト
+    項目：
+        sign:HighまたはLow
+        term：メインメニューで選択された取引手法がHighLow・HighLowスプレッドだった場合の、短期・中期・長期の指定
+        amount:発注する金額
+    :return:
+    """
     global driver
     symbol = order['symbol']
     opener = driver.find_element_by_css_selector("#highlow-asset-filter > span.asset-filter--opener")
     opener.click()
     search_box = driver.find_element_by_id('searchBox')
     search_box.send_keys(symbol)
-    time.sleep(5)
+    time.sleep(3)
     select = driver.find_element_by_css_selector("#assetsFilteredList > div")
     select.click()
     time.sleep(1)
 
 
 def select_indicated_term():
-    global driver, order_info, selected_menu, selected_term
+    global driver, order_info, selected_menu, selected_duration
     """
     メインメニューで「High・Low」または「High・Lowスプレッド」が選択されていて、
     なおかつ時間で15分と選択されていた場合、終了時刻の違う３つの選択肢がある。
@@ -165,12 +195,13 @@ def select_indicated_term():
     long_term_trade_data = {}
     middle_term_trade_data = {}
     short_term_trade_data = {}
+
     if selected_menu == "ChangingStrike" or selected_menu == "FixedPayoutHL":
-        if selected_term == "15分":
+        if selected_duration == "15分":
             soup = BeautifulSoup(driver.page_source, 'lxml')
             # メインメニューでChangingStrike(High・Low）かFixedPayoutHL（High・Lowスプレッド）が選択されていて、
-            # かつ２番目のメニューで選択された期間が１５分だった場合、
-            # 締め切り時刻別に３つのパネルがあるので、予め指定された期間（短期・中期・長期）に対応して注文を選択する。
+            # かつ２番目のメニューで選択された期間が１５分だった場合、締め切り時刻別に３つのパネルがあるので、
+            # 予め指定された期間（短期・中期・長期）に対応して注文を選択する。
             selected_menu_expression = selected_menu + "|" + selected_menu + " selected"
             carousel_items = soup.find_all('div', class_=re.compile(selected_menu_expression), id=re.compile("\d{4}"))
             now = datetime.datetime.now()
@@ -236,6 +267,9 @@ def select_indicated_term():
 
 
 def set_oneclick_trade():
+    """
+    ワンクリックトレードをONにする
+    """
     global driver
     oneclick_trade = driver.find_element_by_css_selector(
         "#strikeAreaRegion > div > div.chartTimeArea.pull-right.last-child > a")
