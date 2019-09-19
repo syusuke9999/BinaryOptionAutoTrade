@@ -29,7 +29,6 @@ def main():
                                          "取引時間（間隔）を指定して下さい")
         print("selected_menu=" + selected_menu + "    selected_duration=" + selected_duration)
         if selected_duration != "全て":
-
             Scrape.set_oneclick_trade()
             condition_ok = True
             Scrape.wait_signal()
@@ -42,6 +41,13 @@ def login():
         print("ログインページに遷移できました")
         if Scrape.login_to_member_page():
             print("ログイン出来ました")
+            return True
+        else:
+            print("何らかの理由でログインできませんでした。")
+            return False
+    else:
+        print("何らかの理由でログインできませんでした。")
+        return False
 
 
 if __name__ == '__main__':
