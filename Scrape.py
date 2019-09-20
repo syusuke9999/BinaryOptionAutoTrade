@@ -48,16 +48,29 @@ def get_selected_menu_and_duration():
 
 
 def transit_to_login_page():
+    """
+    ログイン画面へ遷移する
+    :return:
+        boolean: 遷移に成功したらTrue、失敗したらFalseを返す。
+    """
     global driver, Sign_file_path, username, password
+    # 設定ファイルを読み込んで、シグナルファイルのパスと、ユーザー名、パスワードを読み取り、変数に代入する
     reader = open("setting.txt", "r", encoding='utf-8')
     Sign_file_path = reader.readline()
+    # 改行文字を取り除く
     Sign_file_path = Sign_file_path.strip()
     username = reader.readline()
     password = reader.readline()
-    driver.get(Parameter.top_page_url)
-    WebDriverWait(driver, 60).until(expected_conditions.url_contains(Parameter.top_page_url))
+    # トップページを表示
+    driver.get(Parameter.trade_page_url)
+    WebDriverWait(driver, 60).until(expected_conditions.url_contains(Parameter.trade_page_url))
+    # JavaScriptの実行でログインページへ遷移
     driver.execute_script(Parameter.script_to_transition_login_page)
     WebDriverWait(driver, 60).until(expected_conditions.url_contains(Parameter.login_page_url))
+    while driver.current_url != Parameter.login_page_url:
+        time.sleep(5)
+        link_button_to_login_page = driver.find_element_by_css_selector(Parameter.login_page_url)
+        link_button_to_login_page.click()
     if driver.current_url == Parameter.login_page_url:
         return True
     else:
@@ -65,7 +78,7 @@ def transit_to_login_page():
 
 
 def login_to_member_page():
-    global driver, Sign_file_path, user_name, password
+    global driver, Sign_file_path, username, password
     """
     Returns:
         bool:
@@ -77,26 +90,46 @@ def login_to_member_page():
     user_name.send_keys(username.strip())
     pass_word = driver.find_element_by_id(Parameter.element_id_of_password)
     pass_word.send_keys(password.strip())
+    try_count = 0
+    driver.implicitly_wait(10)
+    # ログインボタンをクリック
     login_button = driver.find_element_by_css_selector(Parameter.element_css_selector_of_login_button)
     login_button.click()
-    WebDriverWait(driver, 60).until(expected_conditions.element_to_be_clickable((By.CSS_SELECTOR, "#main-menu > div > ul > li:nth-child(1) > span > a")))
-
-    while driver.current_url != "https://trade.highlow.com/":
-        home_button = driver.find_element_by_css_selector("#main-menu > div > ul > li:nth-child(1) > span > a")
-        home_button.click()
-        WebDriverWait(driver, 60).until(ec.presence_of_all_elements_located)
-    if driver.current_url == "https://trade.highlow.com/":
-        source_soup = BeautifulSoup(driver.page_source, "lxml")
-        logged_in = source_soup.select("Logout")
-        if logged_in is not None:
-            return True
+    time.sleep(5)
+    while driver.current_url != Parameter.trade_page_url or \
+            driver.current_url != "https://highlow.com/my-account/dashboard":
+        soup = BeautifulSoup(driver.page_source, "lxml")
+        tradepage_button_soup = soup.select_one(Parameter.element_css_selector_of_tradepage_button)
+        if tradepage_button_soup is None:
+            time.sleep(3)
+            try_count += 1
+            if try_count > 10:
+                messagebox.showerror("ログインエラー", "ログインボタンをクリックすることが出来ません。プログラムを終了します。")
         else:
-            print("ログイン出来ませんでした")
-            return False
+            tradepage_button = driver.find_element_by_css_selector(Parameter.element_css_selector_of_tradepage_button)
+            tradepage_button.click()
+            break
+        soup = BeautifulSoup(driver.page_source, "lxml")
+        form_message_content = soup.select_one(Parameter.element_css_selector_error_message)
+        if form_message_content is not None:
+            if form_message_content.text.strip() == 'ユーザー名またはパスワードが無効です。':
+                messagebox.showerror("ログインエラー", "ブラウザー上でユーザー名またはパスワードが無効との表示がありました。"
+                                                "ユーザー名やパスワードが正しく設定ファイルに記載されている事を確認して下さい。"
+                                                "プログラムを終了します。")
+                terminate_webdriver()
+                return False
+    source_soup = BeautifulSoup(driver.page_source, "lxml")
+    logged_in = source_soup.select("Logout")
+    if logged_in is not None:
+        return True
+    else:
+        print("ログイン出来ませんでした")
+        return False
 
 
 def wait_signal():
-    global driver, order_info, order_flag
+    global order_info, order_flag
+    print("MT4のEAがシグナルファイルを生成するのを待っています。")
     while order_flag is False:
         order_info, order_flag = detect_signal()
     if order_flag:
@@ -116,10 +149,12 @@ def detect_signal():
         term：メインメニューで選択された取引手法がHighLow・HighLowスプレッドだった場合の、短期・中期・長期の指定
         amount:発注する金額
     """
-    global order_flag, Sign_file_path, user_name, password
+    global order_flag, Sign_file_path
     order_flag = False
     if os.path.exists(Sign_file_path):
         time.sleep(1)
+        # MT4が出力するシグナルファイルが存在するか調べて存在する場合は、
+        # その内容を辞書型オブジェクトに格納し、order_flagをTrueにして、シグナルファイルを削除する。
         reader = open(Sign_file_path, "r")
         order_info['symbol'] = reader.readline()
         if "/" not in order_info['symbol']:
@@ -139,9 +174,15 @@ def detect_signal():
 
 
 def send_order():
+    """
+    グローバル変数（辞書型）であるorder_infoの内容を元にブラウザーを自動操作して、実際の発注を行う。
+    :return:
+    """
     global driver, order_info
     select_symbol(order_info)
     trade_data = select_indicated_term()
+    WebDriverWait(driver, 10).until(expected_conditions.element_to_be_clickable((
+        By.ID, trade_data['id'])))
     trade_box = driver.find_element_by_id(trade_data['id'])
     trade_box.click()
     soup = BeautifulSoup(driver.page_source, "lxml")
@@ -165,6 +206,7 @@ def send_order():
                 low_button.click()
         else:
             messagebox.showerror('発注', "発注締め切り時間後のため、発注出来ません。")
+            return False
 
 
 def select_symbol(order):
