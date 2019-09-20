@@ -134,6 +134,7 @@ def wait_signal():
         order_info, order_flag = detect_signal()
     if order_flag:
         send_order()
+        print("シグナルファイルを検出しました。発注プロセスに移ります。")
         order_flag = False
         wait_signal()
 
